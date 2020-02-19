@@ -1,0 +1,659 @@
+```{r}
+install.packages("forcats")
+library(forcats)
+install.packages("dplyr")
+library(dplyr)
+install.packages("stringr")
+library(stringr)
+```
+
+```{r}
+review=read.csv("review.csv")
+review$id=NULL
+review$X=NULL
+review$review_scores_rating=as.factor(review$review_scores_rating)
+review=na.omit(review)
+```
+
+
+## Training Set EDA
+```{r}
+par(mfrow=c(2,3))
+hist(review$host_listings_count, col="blue")
+plot(review$cancellation_policy, col="blue")
+plot(review$host_identity_verified, col="blue")
+plot(review$host_is_superhost, col="blue")
+plot(review$host_response_time, col="blue")
+plot(review$room_type, col="blue")
+plot(review$bed_type, col="blue")
+plot(review$instant_bookable, col="blue")
+plot(review$property_type, col="blue")
+
+plot(as.factor(review$bedrooms), col="blue")
+plot(as.factor(review$bathrooms), col="blue")
+plot(as.factor(review$minimum_nights), col="blue")
+plot(as.factor(review$maximum_nights), col="blue")
+plot(as.factor(review$guests_included), col="blue")
+plot(as.factor(review$accommodates), col="blue")
+
+hist(review$host_listings_count, col="blue")
+plot(review$property_type, col="blue")
+plot(review$bed_type, col="blue")
+#?? what about the other variables
+hist(as.numeric(review$price))
+hist(as.numeric(review$cleaning_fee))
+
+ct=table(review$review_scores_rating)
+prop.ct=prop.table(ct)
+```
+```{r}
+plot(review$property_type, review$review_scores_rating)
+plot(review$bed_type, review$review_scores_rating)
+```
+
+
+## Data Preprocessing
+```{r}
+review$property_type = fct_recode(review$property_type,
+                                  "House/Apartment"="House",
+                                  "House/Apartment"="Apartment",
+                                  "Other"="Condominium",
+                                  "Other"="Townhouse",
+                                  "Other"="Tent",
+                                  "Other"="Guest suite",
+                                  "Other"="Serviced apartment",
+                                  "Other"="Cottage",
+                                  "Other"="Camper/RV",
+                                  "Other"="Bungalow",
+                                  "Other"="Loft",
+                                  "Other"="Other",
+                                  "Other"="Boat",
+                                  "Other"="Bed and breakfast",
+                                  "Other"="Guesthouse",
+                                  "Other"="In-law",
+                                  "Other"="Farm stay",
+                                  "Other"="Villa",
+                                  "Other"="Boutique hotel",
+                                  "Other"="Cabin",
+                                  "Other"="Yurt",
+                                  "Other"="Tiny house",
+                                  "Other"="Aparthotel",
+                                  "Other"="Hostel",
+                                  "Other"="Houseboat",
+                                  "Other"="Resort",
+                                  "Other"="Treehouse")
+
+review$bed_type = fct_recode(review$bed_type,
+                             "Real Bed"="Real Bed",
+                             "Other"="Futon",
+                             "Other"="Airbed",
+                             "Other"="Couch",
+                             "Other"="Pull-out Sofa")
+
+review$host_listings_count = ifelse(review$host_listings_count==1, "Single", "Multiple")
+
+review$cancellation_policy = fct_recode(review$cancellation_policy,
+                                         "Flexible" = 'flexible',
+                                         "Moderate" = 'moderate',
+                                         "Strict" = 'strict_14_with_grace_period',
+                                         "Strict" = 'strict',
+                                         "Super Strict" = 'super_strict_60',
+                                         "Super Strict" = 'super_strict_30')
+
+review$host_response_rate = as.numeric(review$host_response_rate)
+review$price = as.numeric(review$price)
+review$cleaning_fee = as.numeric(review$cleaning_fee)
+
+neighborhoods.centers <- as.data.frame(matrix(0, nrow = 17, ncol = 2))
+rownames(neighborhoods.centers) <- unique(review$neighbourhood_group_cleansed)
+colnames(neighborhoods.centers) <- c('latitude', 'longitude')
+neighborhoods.centers['Other neighborhoods',1:2] <- c(47.6097, -122.3422)
+neighborhoods.centers['Lake City',1:2] <- c(47.723244, -122.286596)
+neighborhoods.centers['Queen Anne',1:2] <- c(47.6205, -122.3493)
+neighborhoods.centers['University District',1:2] <- c(47.655548, -122.303200)
+neighborhoods.centers['Delridge',1:2] <- c(47.560966, -122.351856)
+neighborhoods.centers['Capitol Hill',1:2] <- c(47.6253, -122.3222)
+neighborhoods.centers['Downtown',1:2] <- c(47.6097, -122.3422)
+neighborhoods.centers['Seward Park',1:2] <- c(47.5496, -122.2574)
+neighborhoods.centers['Ballard',1:2] <- c(47.6655, -122.3970)
+neighborhoods.centers['West Seattle',1:2] <- c(47.532411, -122.393295)
+neighborhoods.centers['Central Area',1:2] <- c(47.5932, -122.3005)
+neighborhoods.centers['Cascade',1:2] <- c(47.6205, -122.3493)
+neighborhoods.centers['Beacon Hill',1:2] <- c(47.579265, -122.311722)
+neighborhoods.centers['Rainier Valley',1:2] <- c(47.529612, -122.263677)
+neighborhoods.centers['Magnolia',1:2] <- c(47.658198, -122.405829)
+neighborhoods.centers['Northgate',1:2] <- c(47.706164, -122.325904)
+neighborhoods.centers['Interbay',1:2] <- c(47.643620, -122.378368)
+
+neighborhood <- as.character(review$neighbourhood_group_cleansed)
+distance <- sqrt((review$latitude - neighborhoods.centers[neighborhood,1])^2 +
+                   (review$longitude - neighborhoods.centers[neighborhood,2])^2)
+miles <- distance * 69
+review$distance = cut(miles,
+            breaks = c(0, 1, 2, Inf),
+            labels = c('center', 'close', 'far'))
+
+review$latitude <- NULL
+review$longitude <- NULL
+
+review$amenities_count <- str_count(review$amenities, ',') + 1
+review$amenities <- NULL
+```
+
+
+## Model 1: Logistic Regression (redo training/test error rates and consider omitting variables)
+```{r}
+set.seed(1)
+train=sample(1:nrow(review), floor(0.3*(nrow(review))), replace=FALSE) # split 30% to be used as validation set
+review.test=review[-train,]
+review.train=review[train,]
+
+model1 = glm(review_scores_rating~., family = "binomial", data=review.train)
+summary(model1)$coef
+
+glm.probs=predict(model1, newdata=review.test, type="response")
+glm.pred=rep(0, nrow(review))
+glm.pred[glm.probs>0.5]=1
+
+mean(glm.pred==review.train$review_scores_rating)
+# test set error rate is 21.12%
+```
+
+```{r}
+#library(MASS)
+#lda.fit = lda(review_scores_rating~., data=review, subset=train)
+#lda.pred = predict(lda.fit, newdata=review[-train,])
+```
+
+
+## Model 2: Classification Tree
+```{r}
+install.packages("tree")
+library(tree)
+
+tree.review=tree(review_scores_rating~., data=review)
+summary(tree.review)
+
+# training error rate is 12.59%
+
+tree.train=tree(review_scores_rating~., data=review.train)
+tree.pred=predict(tree.train, newdata=review.test, type="class")
+table(tree.pred, review.test$review_scores_rating)
+(113+2327)/nrow(review.test)
+
+# 86.19% of the test observations are correctly classified
+```
+```{r}
+cv.review=cv.tree(tree.train, FUN=prune.misclass)
+prune.review=prune.misclass(tree.train, best=5)
+review.pred=predict(prune.review, newdata=review.test, type="class")
+table(review.pred, review.test$review_scores_rating)
+
+(85+2362)/nrow(review.test)
+
+# 86.44% of the test observations are correctly classified
+```
+
+## Model 3: K-NN ?? standardize
+```{r}
+library(class)
+# one-hot encoding 
+dummy=model.matrix(~.,data=review.train)
+dummy=as.data.frame(dummy)
+dummy$`(Intercept)`=NULL
+train.score=dummy$review_scores_rating1
+
+dummy.test=model.matrix(~., data=review.test)
+dummy.test=as.data.frame(dummy.test)
+dummy.test$`(Intercept)`=NULL
+test.score = dummy.test$review_scores_rating1
+
+knn.pred = knn(dummy, dummy.test, train.score, k=1)
+table(knn.pred, test.score)
+(143+2194)/nrow(dummy.test)
+
+# 82.55% of the test observations are correctly classified
+```
+
+
+## Model 4: SVM ?? standardize // radial, polynomial, linear // cost, degree, gamma
+```{r}
+install.packages("e1071")
+library(e1071)
+# wrong method because categorical variables not encoded (!!!)
+
+#svmfit = svm(review_scores_rating~., data=review.train, kernel="polynomial", cost=1e7)
+#summary(svmfit)
+
+tune.out = tune(svm, review_scores_rating~., data=review.train, kernel="linear", ranges=list(cost=c(0.001, 0.01, 1, 10, 100)))
+summary(tune.out)
+
+bestmod=tune.out$best.model
+
+ypred=predict(bestmod, newdata=review.test)
+table(predict=ypred, truth=review.test$review_scores_rating)
+(134+2320)/nrow(review.test)
+
+# 86.19% of the test observations are correctly classified
+```
+
+```{r}
+#svmfit=svm(review_scores_rating1~., data=dummy, kernel="polynomial", cost=1e7, scale=TRUE)
+
+tune.out = tune(svm, review_scores_rating~., data=dummy, kernel="polynomial", scale=TRUE, ranges=list(cost=c(0.001, 0.01, 1, 10, 100), gamma=c(0.01, 10, 100)))
+summary(tune.out)
+
+bestmod=tune.out$best.model
+
+#ypred=predict(bestmod, newdata=dummy.test)
+#table(predict=ypred, truth=dummy.test$review_scores_rating1)
+
+#plot(bestmod, dummy)
+```
+
+```{r}
+tune.out = tune(svm, review_scores_rating~., data=dummy, kernel="radial", scale=TRUE, ranges=list(cost=c(0.001, 0.01, 1, 10, 100), gamma=c(0.01, 10, 100)))
+summary(tune.out)
+
+bestmod=tune.out$best.model
+```
+
+
+## Model 5: Random Forest (must preprocess data to numeric values)
+```{r}
+#install.packages("randomForest")
+#library(randomForest)
+
+#bag.review=randomForest(review_scores_rating~., data=review.train, nodesize=10, mtry=20, ntree=50)
+review.train=review[train,]
+bag.review=randomForest(review_scores_rating~., data=review.train)
+bag.review
+
+which.min(bag.review$err.rate[,1]) # 274 trees is plenty
+#bag.review=randomForest(review_scores_rating~., data=review.train, mtry=20)
+
+plot(bag.review, ylim=c(0.11, 0.17), main="Untuned Model Error")
+plot(bag.review$err.rate[,1], pch=19)
+```
+
+```{r}
+features <- setdiff(names(review), "review_scores_rating")
+
+rf2 <- tuneRF(
+  x          = review.train[features],
+  y          = review.train$review_scores_rating,
+  ntreeTry   = 280,
+  mtryStart  = 5,
+  stepFactor = 1.5,
+  improve    = 0.01,
+  trace      = FALSE      # to not show real-time progress 
+)
+```
+
+```{r}
+# !!! good model !!!
+new.bag=randomForest(review_scores_rating~., data=review.train, ntree=270, mtry=20, nodesize=9)
+plot(new.bag, ylim=c(0.117, 0.2), main="Tuned Model Error")
+```
+```{r}
+reduced.mod = randomForest(review_scores_rating~.-, data=review.train, ntree=270, mtry=20, nodesize=9)
+```
+
+```{r}
+yhat.bag=predict(new.bag, newdata=review.test)
+#yhat.bag=predict(bag.review, newdata=review.test)
+1-(sum(diag(table(yhat.bag, review.test$review_scores_rating)))/nrow(review.test))
+```
+
+```{r}
+install.packages("ranger")
+library(ranger)
+
+hyper_grid <- expand.grid(
+  mtry       = seq(10, 20, by = 2),
+  node_size  = seq(3, 9, by = 2)
+)
+
+for(i in 1:nrow(hyper_grid)) {
+  # train model
+  model <- ranger(
+    formula         = review_scores_rating~., 
+    data            = review.train, 
+    num.trees       = 270,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i]
+  )
+}
+
+model
+```
+
+
+## Model 6: Boosting ?? tuning parameters
+```{r}
+install.packages("gbm")
+library(gbm)
+
+review.train2=review[train,]
+
+boost.review=gbm(review_scores_rating~., data=review.train2, distribution="bernoulli", n.trees=5000, shrinkage = 0.001, cv.folds = 5)
+
+summary(boost.review)
+boost.review
+
+review.test2=review[-train,]
+
+yhat.boost=predict(boost.review, newdata=review.test2, n.trees=5000)
+yhat.boost
+mean((as.numeric(yhat.boost)-as.numeric(review.test2$review_scores_rating))^2)
+```
+
+
+## Unsupervised Learning EDA ??
+
+## PCA does not work on categorical
+```{r}
+# PCA
+mat = data.matrix(review.train2, rownames.force = NA)
+pr = prcomp(mat, center=TRUE, scale=TRUE)
+plot(pr$x[,1:2], pch=19)
+
+summary(pr)
+
+pve = 100*pr$sdev^2/sum(pr$sdev^2)
+plot(pve, type="o", col="blue")
+plot(cumsum(pve), type="o", col="brown3")
+```
+
+```{r}
+# hierarchical clustering ??
+review=na.omit(review)
+review$longitude=NULL
+review$latitude=NULL
+review$amenities=NULL
+
+d = dist(review, method="euclidean")
+hc1 = hclust(d, method="complete")
+hc2 = hclust(d, method="average")
+hc3 = hclust(d, method="single")
+
+cut1=cutree(hc1, k=2)
+cut2=cutree(hc2, k=2)
+cut3=cutree(hc3, k=2)
+plot(review$review_scores_rating, col=factor(cut1))
+plot(review$review_scores_rating, col=factor(cut2))
+plot(review$review_scores_rating, col=factor(cut3))
+
+plot(hc1, cex=0.6)
+plot(hc2, cex=0.6)
+plot(hc3, cex=0.6)
+```
+
+```{r}
+# more categorical preprocessing for svm/random forest/boosting
+review$cancellation_policy <- fct_recode(review$cancellation_policy,
+                                         "1" = 'Flexible',
+                                         "2" = 'Moderate',
+                                         "3" = 'Strict',
+                                         "4" = 'Super Strict')
+
+review$distance <- fct_recode(review$distance,
+                                         "1" = 'close',
+                                         "2" = 'center',
+                                         "3" = 'far')
+
+review$bed_type <- fct_recode(review$bed_type,
+                              "3" = "Couch",
+                              "2" = "Airbed", "2" = "Futon", "2" = "Pull-out Sofa",
+                              "1" = "Real Bed")
+levels(review$host_is_superhost) = c(0,1)
+levels(review$host_identity_verified) = c(0,1)
+levels(review$instant_bookable) = c(0,1)
+
+review$host_response_time = fct_recode(review$host_response_time,
+                                         "1" = "within an hour",
+                                         "2" = "within a few hours",
+                                         "3" = "within a day",
+                                         "4" = "a few days or more")
+
+review$property_type = fct_recode(review$property_type,
+                                  "1"="House/Apartment",
+                                  "2"="Condominium",
+                                  "2"="Townhouse",
+                                  "2"="Tent",
+                                  "2"="Guest suite",
+                                  "2"="Serviced apartment",
+                                  "2"="Cottage",
+                                  "2"="Camper/RV",
+                                  "2"="Bungalow",
+                                  "2"="Loft",
+                                  "2"="Other",
+                                  "2"="Boat",
+                                  "2"="Bed and breakfast",
+                                  "2"="Guesthouse",
+                                  "2"="In-law",
+                                  "2"="Farm stay",
+                                  "2"="Villa",
+                                  "2"="Boutique hotel",
+                                  "2"="Cabin",
+                                  "2"="Yurt",
+                                  "2"="Tiny house",
+                                  "2"="Aparthotel",
+                                  "2"="Hostel",
+                                  "2"="Houseboat",
+                                  "2"="Treehouse",
+                                  "2"="Resort")
+
+review$room_type = fct_recode(review$room_type,
+                              "1"="Private room",
+                              "2"="Entire home/apt",
+                              "3"="Shared room")
+
+review$host_listings_count = ifelse(review$host_listings_count==1, 0, 1)
+```
+
+## EM does not work on categorical
+```{r}
+install.packages("mixtools")
+library(mixtools)
+
+mix=mvnormalmixEM(dummy, k=2)
+dummy.mat=as.matrix(dummy)
+```
+
+## K-Means N/A on categorical 
+```{r}
+km.out=kmeans(dummy, centers=2, nstart=50, algorithm="Lloyd")
+
+tab=xtabs(~km.out$cluster+dummy$review_scores_rating1)
+tab
+
+1-sum(diag(tab))/sum(tab)
+```
+
+## PCAmix for both categorical/numerical mix data
+```{r}
+install.packages("PCAmixdata")
+library(PCAmixdata)
+
+split=splitmix(review.train)
+x1=split$X.quanti
+x2=split$X.quali
+
+res.pcamix=PCAmix(X.quanti=x1, X.quali=x2,rename.level=TRUE, graph=FALSE)
+summary(res.pcamix)
+
+plot(res.pcamix, coloring.ind = x2$review_scores_rating)
+
+plot(res.pcamix$eig[,1]) # retain 11 components
+res.pcamix$eig # 13 dimensions needed to explain 50% of variance
+```
+
+```{r}
+test.set=read.csv("review_test.csv")
+test.set$id=NULL
+test.set$X=NULL
+
+test.set$property_type = fct_recode(test.set$property_type,
+                                  "House/Apartment"="House",
+                                  "House/Apartment"="Apartment",
+                                  "Other"="Condominium",
+                                  "Other"="Townhouse",
+                                  "Other"="Tent",
+                                  "Other"="Guest suite",
+                                  "Other"="Serviced apartment",
+                                  "Other"="Cottage",
+                                  "Other"="Camper/RV",
+                                  "Other"="Bungalow",
+                                  "Other"="Loft",
+                                  "Other"="Other",
+                                  "Other"="Boat",
+                                  "Other"="Bed and breakfast",
+                                  "Other"="Guesthouse",
+                                  "Other"="In-law",
+                                  "Other"="Farm stay",
+                                  "Other"="Villa",
+                                  "Other"="Boutique hotel",
+                                  "Other"="Cabin",
+                                  "Other"="Yurt",
+                                  "Other"="Tiny house",
+                                  "Other"="Aparthotel",
+                                  "Other"="Hostel",
+                                  "Other"="Houseboat",
+                                  "Other"="Resort",
+                                  "Other"="Treehouse")
+
+test.set$bed_type = fct_recode(test.set$bed_type,
+                             "Real Bed"="Real Bed",
+                             "Other"="Futon",
+                             "Other"="Airbed",
+                             "Other"="Couch",
+                             "Other"="Pull-out Sofa")
+
+test.set$host_listings_count = ifelse(test.set$host_listings_count==1, "Single", "Multiple")
+
+test.set$cancellation_policy = fct_recode(test.set$cancellation_policy,
+                                         "Flexible" = 'flexible',
+                                         "Moderate" = 'moderate',
+                                         "Strict" = 'strict_14_with_grace_period',
+                                         "Strict" = 'strict',
+                                         "Super Strict" = 'super_strict_60',
+                                         "Super Strict" = 'super_strict_30')
+
+test.set$host_response_rate = as.numeric(test.set$host_response_rate)
+test.set$price = as.numeric(test.set$price)
+test.set$cleaning_fee = as.numeric(test.set$cleaning_fee)
+
+neighborhoods.centers <- as.data.frame(matrix(0, nrow = 17, ncol = 2))
+rownames(neighborhoods.centers) <- unique(test.set$neighbourhood_group_cleansed)
+colnames(neighborhoods.centers) <- c('latitude', 'longitude')
+neighborhoods.centers['Other neighborhoods',1:2] <- c(47.6097, -122.3422)
+neighborhoods.centers['Lake City',1:2] <- c(47.723244, -122.286596)
+neighborhoods.centers['Queen Anne',1:2] <- c(47.6205, -122.3493)
+neighborhoods.centers['University District',1:2] <- c(47.655548, -122.303200)
+neighborhoods.centers['Delridge',1:2] <- c(47.560966, -122.351856)
+neighborhoods.centers['Capitol Hill',1:2] <- c(47.6253, -122.3222)
+neighborhoods.centers['Downtown',1:2] <- c(47.6097, -122.3422)
+neighborhoods.centers['Seward Park',1:2] <- c(47.5496, -122.2574)
+neighborhoods.centers['Ballard',1:2] <- c(47.6655, -122.3970)
+neighborhoods.centers['West Seattle',1:2] <- c(47.532411, -122.393295)
+neighborhoods.centers['Central Area',1:2] <- c(47.5932, -122.3005)
+neighborhoods.centers['Cascade',1:2] <- c(47.6205, -122.3493)
+neighborhoods.centers['Beacon Hill',1:2] <- c(47.579265, -122.311722)
+neighborhoods.centers['Rainier Valley',1:2] <- c(47.529612, -122.263677)
+neighborhoods.centers['Magnolia',1:2] <- c(47.658198, -122.405829)
+neighborhoods.centers['Northgate',1:2] <- c(47.706164, -122.325904)
+neighborhoods.centers['Interbay',1:2] <- c(47.643620, -122.378368)
+
+neighborhood <- as.character(test.set$neighbourhood_group_cleansed)
+distance <- sqrt((test.set$latitude - neighborhoods.centers[neighborhood,1])^2 +
+                   (test.set$longitude - neighborhoods.centers[neighborhood,2])^2)
+miles <- distance * 69
+test.set$distance = cut(miles,
+            breaks = c(0, 1, 2, Inf),
+            labels = c('center', 'close', 'far'))
+
+test.set$latitude <- NULL
+test.set$longitude <- NULL
+
+test.set$amenities_count <- str_count(test.set$amenities, ',') + 1
+test.set$amenities <- NULL
+
+test.set$cancellation_policy <- fct_recode(test.set$cancellation_policy,
+                                         "1" = 'Flexible',
+                                         "2" = 'Moderate',
+                                         "3" = 'Strict',
+                                         "4" = 'Super Strict')
+
+test.set$distance <- fct_recode(test.set$distance,
+                                         "1" = 'close',
+                                         "2" = 'center',
+                                         "3" = 'far')
+
+test.set$bed_type <- fct_recode(test.set$bed_type,
+                              "3" = "Couch",
+                              "2" = "Airbed", "2" = "Futon", "2" = "Pull-out Sofa",
+                              "1" = "Real Bed")
+levels(test.set$host_is_superhost) = c(0,1)
+levels(test.set$host_identity_verified) = c(0,1)
+levels(test.set$instant_bookable) = c(0,1)
+
+test.set$host_response_time = fct_recode(test.set$host_response_time,
+                                         "1" = "within an hour",
+                                         "2" = "within a few hours",
+                                         "3" = "within a day",
+                                         "4" = "a few days or more")
+
+test.set$property_type = fct_recode(test.set$property_type,
+                                  "1"="House/Apartment",
+                                  "2"="Condominium",
+                                  "2"="Townhouse",
+                                  "2"="Tent",
+                                  "2"="Guest suite",
+                                  "2"="Serviced apartment",
+                                  "2"="Cottage",
+                                  "2"="Camper/RV",
+                                  "2"="Bungalow",
+                                  "2"="Loft",
+                                  "2"="Other",
+                                  "2"="Boat",
+                                  "2"="Bed and breakfast",
+                                  "2"="Guesthouse",
+                                  "2"="In-law",
+                                  "2"="Farm stay",
+                                  "2"="Villa",
+                                  "2"="Boutique hotel",
+                                  "2"="Cabin",
+                                  "2"="Yurt",
+                                  "2"="Tiny house",
+                                  "2"="Aparthotel",
+                                  "2"="Hostel",
+                                  "2"="Houseboat",
+                                  "2"="Treehouse",
+                                  "2"="Resort")
+
+test.set$room_type = fct_recode(test.set$room_type,
+                              "1"="Private room",
+                              "2"="Entire home/apt",
+                              "3"="Shared room")
+
+test.set$host_listings_count = ifelse(test.set$host_listings_count==1, 0, 1)
+```
+
+```{r}
+test.bag=predict(new.bag, newdata=test.set)
+
+review.guesses=as.vector(test.bag)
+
+review.acc=sum(diag(table(yhat.bag, review.test$review_scores_rating)))/nrow(review.test)
+```
+
+```{r}
+save(list=c("review.guesses","review.acc"),file="stat462final.RData")
+price.guesses
+price.mse
+team.name="beast"
+
+save(list=c("review.guesses","review.acc","price.guesses","price.mse", "team.name"), file="stat462final.RData")
+```
+
